@@ -1,17 +1,25 @@
 package io.github.hamzaikine.loginex;
 
-import android.app.ProgressDialog;
-import android.content.Context;
+import android.app.Activity;
+
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.CountDownTimer;
+
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.support.annotation.NonNull;
+
 import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentTransaction;
-import android.support.v4.content.ContextCompat;
+
+import android.support.v4.content.FileProvider;
+import android.support.v7.app.AlertDialog;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -23,30 +31,69 @@ import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
 import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
+import com.google.android.gms.tasks.Tasks;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.UserProfileChangeRequest;
+import com.google.firebase.firestore.CollectionReference;
+import com.google.firebase.firestore.DocumentReference;
+import com.google.firebase.firestore.DocumentSnapshot;
+import com.google.firebase.firestore.FieldPath;
+import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.FirebaseFirestoreSettings;
+import com.google.firebase.firestore.Query;
+import com.google.firebase.firestore.QueryDocumentSnapshot;
+import com.google.firebase.firestore.QuerySnapshot;
+import com.google.firebase.firestore.WriteBatch;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
+import com.google.gson.Gson;
 
 import java.time.LocalDate;
-import java.util.Calendar;
-import java.util.GregorianCalendar;
+
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 
 import static io.github.hamzaikine.loginex.Login.FIREBASE_AUTH;
 import static java.lang.Thread.sleep;
 
 public class HomePage extends AppCompatActivity
-        implements NavigationView.OnNavigationItemSelectedListener, EventFragment.OnSelectedDate, ProfileFragment.SendUpdate {
+        implements NavigationView.OnNavigationItemSelectedListener, BottomSheetFragment.BottomSheetListener, EventFragment.OnSelectedDate, ProfileFragment.SendUpdate {
 
     private FirebaseAuth mAuth;
+    private FirebaseFirestore db;
+    private StorageReference storageRef;
+    private UploadTask uploadTask;
     private FirebaseUser user;
-    private TextView email,name;
+    private TextView email, name;
+    FrameLayout frameLayoutHomePage;
+    private ArrayList<Person> persons;
+    private static final String TAG = "HomePage";
+    String mCurrentPhotoPath;
+    static final int REQUEST_IMAGE_CAPTURE = 13;
+    private final int CAMERA_REQUEST_CODE = 2;
+    private final int GALLERY_REQUEST_CODE = 1;
+    private static final ThreadPoolExecutor EXECUTOR = new ThreadPoolExecutor(2, 4,
+            60, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,20 +103,18 @@ public class HomePage extends AppCompatActivity
         setSupportActionBar(toolbar);
 
 
-
+        frameLayoutHomePage = findViewById(R.id.home_page);
         mAuth = FirebaseAuth.getInstance();
         user = mAuth.getCurrentUser();
 
-        Log.d("Main",user.getEmail());
+        Log.d("Main", user.getEmail());
 
 
         FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                final String displayName = mAuth.getCurrentUser().getDisplayName();
-                Snackbar.make(view, "Welcome " + displayName, Snackbar.LENGTH_LONG)
-                        .setAction("Action", null).show();
+                showBottomSheetDialogFragment();
             }
         });
 
@@ -143,22 +188,22 @@ public class HomePage extends AppCompatActivity
 //        } else if (id == R.id.nav_send) {
 //
 //        } else
-         if (id == R.id.nav_calendar) {
+        if (id == R.id.nav_calendar) {
             EventFragment eventFragment = new EventFragment();
             FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
             // Replace whatever is in the fragment_container view with this fragment,
             transaction.replace(R.id.home_page, eventFragment);
             // Commit the transaction
             transaction.commit();
-        }else if (id == R.id.nav_manage){
-             ProfileFragment profileFragment = new ProfileFragment();
-             FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
-             // Replace whatever is in the fragment_container view with this fragment,
-             transaction.replace(R.id.home_page, profileFragment);
-             // Commit the transaction
-             transaction.commit();
+        } else if (id == R.id.nav_manage) {
+            ProfileFragment profileFragment = new ProfileFragment();
+            FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
+            // Replace whatever is in the fragment_container view with this fragment,
+            transaction.replace(R.id.home_page, profileFragment);
+            // Commit the transaction
+            transaction.commit();
 
-         }
+        }
 
         DrawerLayout drawer = (DrawerLayout) findViewById(R.id.drawer_layout);
         drawer.closeDrawer(GravityCompat.START);
@@ -228,13 +273,231 @@ public class HomePage extends AppCompatActivity
 
     @Override
     public void sendUpdate(String pname, String pemail) {
-          if(pname != null){
-              name.setText(pname);
-          }
+        if (pname != null) {
+            name.setText(pname);
+        }
 
-          if(pemail != null){
-              email.setText(pemail);
-          }
+        if (pemail != null) {
+            email.setText(pemail);
+        }
 
     }
+
+    public void uploadFileToCloud() {
+
+        FirebaseStorage storage = FirebaseStorage.getInstance();
+        // Create a storage reference from our app
+        storageRef = storage.getReference();
+
+        Uri file = Uri.fromFile(new File(mCurrentPhotoPath));
+
+        Log.d(TAG, "File URI: " + file.toString());
+        // Uri file = Uri.fromFile(new File(fileUri.getPath()));
+        final StorageReference riversRef = storageRef.child("images/" + file.getLastPathSegment());
+        uploadTask = riversRef.putFile(file);
+
+// Register observers to listen for when the download is done or if it fails
+        uploadTask.addOnFailureListener(new OnFailureListener() {
+            @Override
+            public void onFailure(@NonNull Exception exception) {
+                // Handle unsuccessful uploads
+            }
+        }).addOnSuccessListener(new OnSuccessListener<UploadTask.TaskSnapshot>() {
+            @Override
+            public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
+                // taskSnapshot.getMetadata() contains file metadata such as size, content-type, etc.
+
+            }
+        });
+    }
+
+
+    private void dispatchTakePictureIntent() {
+        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        // Ensure that there's a camera activity to handle the intent
+        if (takePictureIntent.resolveActivity(getPackageManager()) != null) {
+            // Create the File where the photo should go
+            File photoFile = null;
+            photoFile = createImageFile();
+            // Continue only if the File was successfully created
+            if (photoFile != null) {
+                Uri photoURI = FileProvider.getUriForFile(this,
+                        "io.github.hamzaikine.loginex.android.fileprovider",
+                        photoFile);
+                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
+                startActivityForResult(takePictureIntent, REQUEST_IMAGE_CAPTURE);
+            }
+        }
+    }
+
+
+    private File createImageFile() {
+        // Create an image file name
+        String timeStamp = new SimpleDateFormat("dd_mmss").format(new Date());
+        String imageFileName = "JPEG_" + timeStamp + "_";
+        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File image = null;
+        try {
+            image = File.createTempFile(
+                    imageFileName,  /* prefix */
+                    ".jpg",         /* suffix */
+                    storageDir      /* directory */
+            );
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        // Save a file: path for use with ACTION_VIEW intents
+        mCurrentPhotoPath = image.getAbsolutePath();
+        Log.d(TAG, mCurrentPhotoPath);
+        return image;
+    }
+
+
+    private void pickFromGallery() {
+        //Create an Intent with action as ACTION_PICK
+        Intent intent = new Intent(Intent.ACTION_PICK, android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        // Sets the type as image/*. This ensures only components of type image are selected
+        intent.setType("image/*");
+        // Launching the Intent
+        if (intent.resolveActivity(getPackageManager()) != null) {
+            saveData();
+            startActivityForResult(intent, GALLERY_REQUEST_CODE);
+        }
+    }
+
+    private void captureFromCamera() {
+
+        AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(this);
+        alertDialogBuilder.setTitle("Kindly Reminder");
+        alertDialogBuilder.setMessage("Please take your picture in landscape mode. So it shows correctly in your card.");
+        alertDialogBuilder.setPositiveButton("Ok", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialogInterface, int i) {
+                Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+
+                intent.putExtra(MediaStore.EXTRA_OUTPUT, FileProvider.getUriForFile(getApplicationContext(), BuildConfig.APPLICATION_ID + ".provider", createImageFile()));
+
+                if (intent.resolveActivity(getPackageManager()) != null)
+                    startActivityForResult(intent, CAMERA_REQUEST_CODE);
+                dialogInterface.dismiss();
+            }
+        }).show();
+
+    }
+
+
+    public void saveData() {
+        SharedPreferences sharedPreferences = getSharedPreferences("shared preferences", MODE_PRIVATE);
+        SharedPreferences.Editor prefsEditor = sharedPreferences.edit();
+        Gson gson = new Gson();
+        String json = gson.toJson(persons); //persons is an ArrayList instance variable
+        prefsEditor.putString("currentList", json);
+        prefsEditor.apply();
+    }
+
+
+    public void showBottomSheetDialogFragment() {
+        BottomSheetFragment bottomSheetFragment = new BottomSheetFragment();
+        bottomSheetFragment.show(getSupportFragmentManager(), bottomSheetFragment.getTag());
+    }
+
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+
+//        if (requestCode == CAMERA_REQUEST_CODE && resultCode == RESULT_OK) {
+//            uploadFileToCloud();
+//            Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
+//        } else if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == RESULT_CANCELED) {
+//            Snackbar.make(frameLayoutHomePage, "image upload was unsuccessful. Try again.", Snackbar.LENGTH_LONG).show();
+//        }
+//
+//        if (requestCode == GALLERY_REQUEST_CODE && resultCode == RESULT_OK) {
+//            uploadFileToCloud();
+//            Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
+//        } else
+//            Snackbar.make(frameLayoutHomePage, "image upload was unsuccessfully. Try again.", Snackbar.LENGTH_LONG).show();
+
+        if (resultCode == Activity.RESULT_OK) {
+            switch (requestCode) {
+                case GALLERY_REQUEST_CODE:
+                    //data.getData returns the content URI for the selected Image
+                    Uri selectedImage = data.getData();
+                    String[] filePathColumn = {MediaStore.Images.Media.DATA};
+                    if (selectedImage != null) {
+                        Cursor cursor = getContentResolver().query(selectedImage,
+                                filePathColumn, null, null, null);
+                        if (cursor != null) {
+                            cursor.moveToFirst();
+
+                            int columnIndex = cursor.getColumnIndex(filePathColumn[0]);
+                            String picturePath = cursor.getString(columnIndex);
+                            mCurrentPhotoPath = picturePath;
+                            Log.d("CurrentPath", mCurrentPhotoPath);
+                            uploadFileToCloud();
+                            Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
+                            //loadData();
+//                            Date now = new Date();
+//                            persons.add(new Person(now.toString(), "Happy", "23 years old",
+//                                    "Male", picturePath));
+
+//                        rv.getAdapter().notifyDataSetChanged();
+                            //  saveData();
+                            // imageView.setImageBitmap(BitmapFactory.decodeFile(picturePath));
+                            cursor.close();
+                        }
+
+                    }
+                    break;
+
+                case CAMERA_REQUEST_CODE:
+                    //imageView.setImageURI(Uri.parse(mCurrentPhotoPath));
+                    if (mCurrentPhotoPath != null) {
+                        uploadFileToCloud();
+                        Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
+                    }
+
+//                    Date now = new Date();
+//                    persons.add(new Person(now.toString(), "Happy", "23 years old",
+//                            "Male", mCurrentPhotoPath));
+
+                    //rv.getAdapter().notifyDataSetChanged();
+                   // saveData();
+                    break;
+
+            }
+
+        }
+    }
+
+
+    @Override
+    public void onButtonClicked(String text) {
+        if (text.equals("gallery")) {
+            pickFromGallery();
+        }
+
+        if (text.equals("camera"))
+            captureFromCamera();
+
+    }
+
+    @Override
+    public void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putString("currentPath", mCurrentPhotoPath);
+//        if (persons != null) {
+//            saveData();
+      //  }
+    }
+    @Override
+    protected void onRestoreInstanceState(Bundle savedInstanceState) {
+        super.onRestoreInstanceState(savedInstanceState);
+        mCurrentPhotoPath = savedInstanceState.getString("currentPath");
+        //loadData();
+
+    }
+
+
 }

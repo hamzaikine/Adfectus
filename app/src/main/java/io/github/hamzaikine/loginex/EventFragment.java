@@ -43,7 +43,7 @@ public class EventFragment extends Fragment {
             @Override
             public void onSelectedDayChange(CalendarView view, int year, int month, int dayOfMonth) {
              // add code here
-                Toast.makeText(getContext(), (month+1) + "/" + dayOfMonth + "/" + year, Toast.LENGTH_LONG).show();
+//                Toast.makeText(getContext(), (month+1) + "/" + dayOfMonth + "/" + year, Toast.LENGTH_LONG).show();
                 LocalDate date = null;
                     date = LocalDate.of(year,month+1,dayOfMonth);
 

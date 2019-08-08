@@ -81,7 +81,8 @@ public class ProfileFragment extends Fragment {
                                 callback.sendUpdate(user_name, null);
                                 Toast.makeText(getView().getContext(), "user name updated.", Toast.LENGTH_LONG).show();
 
-                            }
+                            }else
+                                Toast.makeText(getView().getContext(), "user name not updated.", Toast.LENGTH_LONG).show();
                         }
                     });
 
@@ -108,7 +109,9 @@ public class ProfileFragment extends Fragment {
                                 callback.sendUpdate(null, user_email);
                                 Toast.makeText(getView().getContext(), "user email" +
                                         " updated.", Toast.LENGTH_LONG).show();
-                            }
+                            }else
+                                Toast.makeText(getView().getContext(), "user email not updated.", Toast.LENGTH_LONG).show();
+
 
                         }
                     });
@@ -130,7 +133,8 @@ public class ProfileFragment extends Fragment {
                         public void onComplete(Task<Void> task) {
                             if (task.isSuccessful()) {
                                 Toast.makeText(getView().getContext(), "user password updated.", Toast.LENGTH_LONG).show();
-                            }
+                            }else
+                                Toast.makeText(getView().getContext(), "user password not updated.", Toast.LENGTH_LONG).show();
                         }
                     });
 
