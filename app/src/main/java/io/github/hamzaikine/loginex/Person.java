@@ -1,11 +1,11 @@
 package io.github.hamzaikine.loginex;
 
 public class Person {
-    private String id;
-    private String emotion;
-    private String age;
-    private String gender;
-    private String photoId;
+    public String id;
+    public String emotion;
+    public String age;
+    public String gender;
+    public String photoId;
 
     Person(String id, String emotion, String age, String gender, String photoId) {
         this.id = id;

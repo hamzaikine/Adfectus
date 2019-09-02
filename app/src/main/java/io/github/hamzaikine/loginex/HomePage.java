@@ -6,6 +6,7 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 
@@ -20,6 +21,9 @@ import android.support.v4.app.FragmentTransaction;
 
 import android.support.v4.content.FileProvider;
 import android.support.v7.app.AlertDialog;
+import android.support.v7.widget.LinearLayoutManager;
+import android.support.v7.widget.RecyclerView;
+import android.support.v7.widget.helper.ItemTouchHelper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -65,6 +69,7 @@ import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 import com.google.firebase.storage.UploadTask;
 import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 
 import java.time.LocalDate;
 
@@ -77,13 +82,16 @@ import static io.github.hamzaikine.loginex.Login.FIREBASE_AUTH;
 import static java.lang.Thread.sleep;
 
 public class HomePage extends AppCompatActivity
-        implements NavigationView.OnNavigationItemSelectedListener, BottomSheetFragment.BottomSheetListener, EventFragment.OnSelectedDate, ProfileFragment.SendUpdate {
+        implements NavigationView.OnNavigationItemSelectedListener, BottomSheetFragment.BottomSheetListener, EventFragment.OnSelectedDate, ProfileFragment.SendUpdate, RecyclerItemTouchHelper.RecyclerItemTouchHelperListener {
 
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
     private StorageReference storageRef;
     private UploadTask uploadTask;
     private FirebaseUser user;
+    private RecyclerView rv;
+    private RVAdapter adapter;
+    private LinearLayoutManager llm;
     private TextView email, name;
     FrameLayout frameLayoutHomePage;
     private ArrayList<Person> persons;
@@ -101,9 +109,12 @@ public class HomePage extends AppCompatActivity
         setContentView(R.layout.activity_home_page);
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-
+        buildRecyclerView();
+        loadData();
 
         frameLayoutHomePage = findViewById(R.id.home_page);
+        adapter = new RVAdapter(this, persons);
+        rv.setAdapter(adapter);
         mAuth = FirebaseAuth.getInstance();
         user = mAuth.getCurrentUser();
 
@@ -435,15 +446,15 @@ public class HomePage extends AppCompatActivity
                             String picturePath = cursor.getString(columnIndex);
                             mCurrentPhotoPath = picturePath;
                             Log.d("CurrentPath", mCurrentPhotoPath);
-                            uploadFileToCloud();
+                           // uploadFileToCloud();
                             Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
                             //loadData();
-//                            Date now = new Date();
-//                            persons.add(new Person(now.toString(), "Happy", "23 years old",
-//                                    "Male", picturePath));
+                            Date now = new Date();
+                            persons.add(new Person(now.toString(), "Happy", "23 years old",
+                                    "Male", picturePath));
 
-//                        rv.getAdapter().notifyDataSetChanged();
-                            //  saveData();
+                            rv.getAdapter().notifyDataSetChanged();
+                            saveData();
                             // imageView.setImageBitmap(BitmapFactory.decodeFile(picturePath));
                             cursor.close();
                         }
@@ -454,16 +465,16 @@ public class HomePage extends AppCompatActivity
                 case CAMERA_REQUEST_CODE:
                     //imageView.setImageURI(Uri.parse(mCurrentPhotoPath));
                     if (mCurrentPhotoPath != null) {
-                        uploadFileToCloud();
+                        //uploadFileToCloud();
                         Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
                     }
 
-//                    Date now = new Date();
-//                    persons.add(new Person(now.toString(), "Happy", "23 years old",
-//                            "Male", mCurrentPhotoPath));
+                    Date now = new Date();
+                    persons.add(new Person(now.toString(), "Happy", "23 years old",
+                            "Male", mCurrentPhotoPath));
 
-                    //rv.getAdapter().notifyDataSetChanged();
-                   // saveData();
+                    rv.getAdapter().notifyDataSetChanged();
+                    saveData();
                     break;
 
             }
@@ -499,5 +510,65 @@ public class HomePage extends AppCompatActivity
 
     }
 
+
+    private void buildRecyclerView() {
+        rv = findViewById(R.id.rv);
+        rv.setHasFixedSize(true);
+        llm = new LinearLayoutManager(this);
+        llm.setOrientation(LinearLayoutManager.VERTICAL);
+        adapter = new RVAdapter(this, persons);
+
+        rv.setLayoutManager(llm);
+        rv.setAdapter(adapter);
+
+        // adding item touch helper
+        // only ItemTouchHelper.LEFT added to detect Right to Left swipe
+        // if you want both Right -> Left and Left -> Right
+        // add pass ItemTouchHelper.LEFT | ItemTouchHelper.RIGHT as param
+        ItemTouchHelper.SimpleCallback itemTouchHelperCallback = new RecyclerItemTouchHelper(0, ItemTouchHelper.LEFT, this);
+        new ItemTouchHelper(itemTouchHelperCallback).attachToRecyclerView(rv);
+
+    }
+
+    public void onSwiped(RecyclerView.ViewHolder viewHolder, int direction, int position) {
+        if (viewHolder instanceof RVAdapter.PersonViewHolder) {
+            // get the removed item name to display it in snack bar
+//            String emotion = persons.get(viewHolder.getAdapterPosition()).emotion;
+
+            // backup of removed item for undo purpose
+            final Person deletedItem = persons.get(viewHolder.getAdapterPosition());
+            final int deletedIndex = viewHolder.getAdapterPosition();
+
+            // remove the item from recycler view
+            adapter.removeItem(viewHolder.getAdapterPosition());
+
+            // showing snack bar with Undo option
+            Snackbar snackbar = Snackbar
+                    .make(frameLayoutHomePage, "This card is removed from List!", Snackbar.LENGTH_LONG);
+            snackbar.setAction("UNDO", new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+
+                    // undo is selected, restore the deleted item
+                    adapter.restoreItem(deletedItem, deletedIndex);
+                }
+            });
+            snackbar.setActionTextColor(Color.YELLOW);
+            snackbar.show();
+        }
+        saveData();
+    }
+
+
+    public void loadData() {
+        SharedPreferences sharedPreferences = getSharedPreferences("shared preferences", MODE_PRIVATE);
+        Gson gson = new Gson();
+        String json = sharedPreferences.getString("currentList", "");
+        persons = gson.fromJson(json, new TypeToken<ArrayList<Person>>() {
+        }.getType());
+        if (persons == null) {
+            persons = new ArrayList<>();
+        }
+    }
 
 }
