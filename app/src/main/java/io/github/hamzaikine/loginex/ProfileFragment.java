@@ -82,7 +82,7 @@ public class ProfileFragment extends Fragment {
                                 Toast.makeText(getView().getContext(), "user name updated.", Toast.LENGTH_LONG).show();
 
                             }else
-                                Toast.makeText(getView().getContext(), "user name not updated.", Toast.LENGTH_LONG).show();
+                                Toast.makeText(getView().getContext(), "failed to update user name.", Toast.LENGTH_LONG).show();
                         }
                     });
 

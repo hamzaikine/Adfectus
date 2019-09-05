@@ -2,6 +2,7 @@ package io.github.hamzaikine.loginex;
 
 import android.app.Activity;
 
+import android.app.ProgressDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -35,6 +36,7 @@ import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.Window;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -45,8 +47,18 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 
+
+import com.android.volley.DefaultRetryPolicy;
+import com.android.volley.Request;
+import com.android.volley.RequestQueue;
+import com.android.volley.Response;
+import com.android.volley.VolleyError;
+import com.android.volley.toolbox.StringRequest;
+import com.android.volley.toolbox.Volley;
+import com.google.android.gms.tasks.Continuation;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
@@ -71,8 +83,13 @@ import com.google.firebase.storage.UploadTask;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.time.LocalDate;
 
+import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -84,6 +101,7 @@ import static java.lang.Thread.sleep;
 public class HomePage extends AppCompatActivity
         implements NavigationView.OnNavigationItemSelectedListener, BottomSheetFragment.BottomSheetListener, EventFragment.OnSelectedDate, ProfileFragment.SendUpdate, RecyclerItemTouchHelper.RecyclerItemTouchHelperListener {
 
+
     private FirebaseAuth mAuth;
     private FirebaseFirestore db;
     private StorageReference storageRef;
@@ -94,6 +112,9 @@ public class HomePage extends AppCompatActivity
     private LinearLayoutManager llm;
     private TextView email, name;
     FrameLayout frameLayoutHomePage;
+    private RequestQueue mQueue;              // queue used with Volley http library
+    final private int MY_SOCKET_TIMEOUT_MS = 10000;    //increase the timeout of Volley
+    ProgressDialog p;
     private ArrayList<Person> persons;
     private static final String TAG = "HomePage";
     String mCurrentPhotoPath;
@@ -102,6 +123,7 @@ public class HomePage extends AppCompatActivity
     private final int GALLERY_REQUEST_CODE = 1;
     private static final ThreadPoolExecutor EXECUTOR = new ThreadPoolExecutor(2, 4,
             60, TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>());
+    private FloatingActionButton fab;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -112,16 +134,19 @@ public class HomePage extends AppCompatActivity
         buildRecyclerView();
         loadData();
 
+
+        // instantiation for layout, recycle view adapter, firebase auth, volley queue
         frameLayoutHomePage = findViewById(R.id.home_page);
         adapter = new RVAdapter(this, persons);
         rv.setAdapter(adapter);
         mAuth = FirebaseAuth.getInstance();
         user = mAuth.getCurrentUser();
+        mQueue = Volley.newRequestQueue(this);
 
         Log.d("Main", user.getEmail());
 
 
-        FloatingActionButton fab = (FloatingActionButton) findViewById(R.id.fab);
+        fab = (FloatingActionButton) findViewById(R.id.fab);
         fab.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -149,6 +174,7 @@ public class HomePage extends AppCompatActivity
         if (drawer.isDrawerOpen(GravityCompat.START)) {
             drawer.closeDrawer(GravityCompat.START);
         } else {
+            rv.setVisibility(View.VISIBLE);
             super.onBackPressed();
 
         }
@@ -204,6 +230,8 @@ public class HomePage extends AppCompatActivity
             FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
             // Replace whatever is in the fragment_container view with this fragment,
             transaction.replace(R.id.home_page, eventFragment);
+            transaction.addToBackStack(null);
+            rv.setVisibility(View.INVISIBLE);
             // Commit the transaction
             transaction.commit();
         } else if (id == R.id.nav_manage) {
@@ -211,6 +239,8 @@ public class HomePage extends AppCompatActivity
             FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
             // Replace whatever is in the fragment_container view with this fragment,
             transaction.replace(R.id.home_page, profileFragment);
+            transaction.addToBackStack(null);
+            rv.setVisibility(View.INVISIBLE);
             // Commit the transaction
             transaction.commit();
 
@@ -296,6 +326,11 @@ public class HomePage extends AppCompatActivity
 
     public void uploadFileToCloud() {
 
+        //initialize the progress dialog and show it
+        p = new ProgressDialog(this);
+        p.setMessage("Analyzing in progress....");
+        p.show();
+
         FirebaseStorage storage = FirebaseStorage.getInstance();
         // Create a storage reference from our app
         storageRef = storage.getReference();
@@ -307,19 +342,37 @@ public class HomePage extends AppCompatActivity
         final StorageReference riversRef = storageRef.child("images/" + file.getLastPathSegment());
         uploadTask = riversRef.putFile(file);
 
-// Register observers to listen for when the download is done or if it fails
-        uploadTask.addOnFailureListener(new OnFailureListener() {
+        Task<Uri> urlTask = uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
             @Override
-            public void onFailure(@NonNull Exception exception) {
-                // Handle unsuccessful uploads
-            }
-        }).addOnSuccessListener(new OnSuccessListener<UploadTask.TaskSnapshot>() {
-            @Override
-            public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
-                // taskSnapshot.getMetadata() contains file metadata such as size, content-type, etc.
+            public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                if (!task.isSuccessful()) {
+                    throw task.getException();
+                }
 
+                // Continue with the task to get the download URL
+                return riversRef.getDownloadUrl();
+            }
+        }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+            @Override
+            public void onComplete(@NonNull Task<Uri> task) {
+                if (task.isSuccessful()) {
+                    Uri downloadUri = task.getResult();
+                    Log.d(TAG,downloadUri.toString());
+                    fetchServerPost(downloadUri.toString());
+                    p.dismiss();
+                    //Send downloadable link to backend server for image processing
+
+
+                } else {
+                    // Handle failures
+                    // ...
+
+                }
             }
         });
+
+
+
     }
 
 
@@ -417,20 +470,8 @@ public class HomePage extends AppCompatActivity
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
 
-//        if (requestCode == CAMERA_REQUEST_CODE && resultCode == RESULT_OK) {
-//            uploadFileToCloud();
-//            Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
-//        } else if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == RESULT_CANCELED) {
-//            Snackbar.make(frameLayoutHomePage, "image upload was unsuccessful. Try again.", Snackbar.LENGTH_LONG).show();
-//        }
-//
-//        if (requestCode == GALLERY_REQUEST_CODE && resultCode == RESULT_OK) {
-//            uploadFileToCloud();
-//            Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
-//        } else
-//            Snackbar.make(frameLayoutHomePage, "image upload was unsuccessfully. Try again.", Snackbar.LENGTH_LONG).show();
-
         if (resultCode == Activity.RESULT_OK) {
+
             switch (requestCode) {
                 case GALLERY_REQUEST_CODE:
                     //data.getData returns the content URI for the selected Image
@@ -446,17 +487,12 @@ public class HomePage extends AppCompatActivity
                             String picturePath = cursor.getString(columnIndex);
                             mCurrentPhotoPath = picturePath;
                             Log.d("CurrentPath", mCurrentPhotoPath);
-                           // uploadFileToCloud();
-                            Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
-                            //loadData();
-                            Date now = new Date();
-                            persons.add(new Person(now.toString(), "Happy", "23 years old",
-                                    "Male", picturePath));
-
-                            rv.getAdapter().notifyDataSetChanged();
-                            saveData();
-                            // imageView.setImageBitmap(BitmapFactory.decodeFile(picturePath));
+                            uploadFileToCloud();
+                            Snackbar.make(frameLayoutHomePage, "Image uploaded successfully.", Snackbar.LENGTH_LONG).show();
+                            //fetchServerPost(mCurrentPhotoPath);
                             cursor.close();
+
+
                         }
 
                     }
@@ -465,16 +501,13 @@ public class HomePage extends AppCompatActivity
                 case CAMERA_REQUEST_CODE:
                     //imageView.setImageURI(Uri.parse(mCurrentPhotoPath));
                     if (mCurrentPhotoPath != null) {
-                        //uploadFileToCloud();
-                        Snackbar.make(frameLayoutHomePage, "image uploaded successfully.", Snackbar.LENGTH_LONG).show();
+
+                        uploadFileToCloud();
+                        Snackbar.make(frameLayoutHomePage, "Image uploaded successfully.", Snackbar.LENGTH_LONG).show();
+                       // fetchServerPost(mCurrentPhotoPath);
+
+
                     }
-
-                    Date now = new Date();
-                    persons.add(new Person(now.toString(), "Happy", "23 years old",
-                            "Male", mCurrentPhotoPath));
-
-                    rv.getAdapter().notifyDataSetChanged();
-                    saveData();
                     break;
 
             }
@@ -570,5 +603,79 @@ public class HomePage extends AppCompatActivity
             persons = new ArrayList<>();
         }
     }
+
+
+    private void fetchServerPost(final String pic_url) {
+
+        String server_url = "http://3.224.85.93";
+        StringRequest postRequest = new StringRequest(Request.Method.POST, server_url,
+                new Response.Listener<String>() {
+                    @Override
+                    public void onResponse(String response) {
+                        // response
+                        Log.d("Response", response);
+                        //getting the whole json object from the response
+                        try {
+                            JSONObject obj = new JSONObject(response);
+                            JSONArray emo = obj.getJSONArray("Emotions");
+
+                            String top_emotion = "Calm";
+                            double conf_lower_bound = 50.0;
+                            //access dictionaries within JSONArray
+                            for(int i=0; i <emo.length(); i++){
+                                JSONObject jo = emo.getJSONObject(i);
+                                Double conf =  jo.getDouble("Confidence");
+                                String type =  jo.getString("Type");
+                                if (conf > conf_lower_bound){
+                                    top_emotion =  type;
+                                }
+                            }
+
+                            String gender = obj.getString("Gender");
+                            String age = obj.getString("Age");
+
+                            Date now = new Date();
+                            persons.add(new Person(now.toString(), top_emotion, age,
+                                    gender, mCurrentPhotoPath));
+
+                            rv.getAdapter().notifyDataSetChanged();
+                            saveData();
+
+                        } catch (JSONException e) {
+                            e.printStackTrace();
+                        }
+
+                    }
+                },
+                new Response.ErrorListener() {
+                    @Override
+                    public void onErrorResponse(VolleyError error) {
+                        // error
+                        Log.d("Error.Response", error.toString());
+
+                    }
+                }
+        ) {
+            @Override
+            protected Map<String, String> getParams() {
+                Map<String, String> params = new HashMap<>();
+                params.put("url", pic_url);
+
+                return params;
+            }
+        };
+
+        postRequest.setRetryPolicy(new DefaultRetryPolicy(
+                MY_SOCKET_TIMEOUT_MS,
+                DefaultRetryPolicy.DEFAULT_MAX_RETRIES,
+                DefaultRetryPolicy.DEFAULT_BACKOFF_MULT));
+
+        mQueue.add(postRequest);
+
+
+
+    }
+
+
 
 }
