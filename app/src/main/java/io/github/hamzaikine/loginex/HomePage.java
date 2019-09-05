@@ -6,6 +6,7 @@ import android.app.ProgressDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
@@ -128,6 +129,7 @@ public class HomePage extends AppCompatActivity
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         setContentView(R.layout.activity_home_page);
         Toolbar toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
@@ -358,15 +360,14 @@ public class HomePage extends AppCompatActivity
                 if (task.isSuccessful()) {
                     Uri downloadUri = task.getResult();
                     Log.d(TAG,downloadUri.toString());
+                    //Send downloadable link to backend server for image processing
                     fetchServerPost(downloadUri.toString());
                     p.dismiss();
-                    //Send downloadable link to backend server for image processing
-
 
                 } else {
                     // Handle failures
                     // ...
-
+                    p.dismiss();
                 }
             }
         });
@@ -607,6 +608,7 @@ public class HomePage extends AppCompatActivity
 
     private void fetchServerPost(final String pic_url) {
 
+
         String server_url = "http://3.224.85.93";
         StringRequest postRequest = new StringRequest(Request.Method.POST, server_url,
                 new Response.Listener<String>() {
@@ -652,7 +654,7 @@ public class HomePage extends AppCompatActivity
                     public void onErrorResponse(VolleyError error) {
                         // error
                         Log.d("Error.Response", error.toString());
-
+                        p.dismiss();
                     }
                 }
         ) {
