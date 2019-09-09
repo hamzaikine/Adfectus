@@ -21,3 +21,8 @@ Server Features:
 * Setup an instance on AWS EC2
 * Use Gunicorn3 and nginx to deploy the flask application
 * Integrate AWS Rekognition API.
+
+Screenshots:
+
+
+![GitHub Logo](/main.png)![GitHub Logo](/drawer.png)![GitHub Logo](/homepage.png)
